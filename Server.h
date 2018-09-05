@@ -53,35 +53,26 @@ class Server
     sockaddr_in6 serverAddr, clientAddr;
     socklen_t addrLen = sizeof(clientAddr);
 
-    static const size_t filaEsperaMaxSize = 10; //tamanho da fila do dispatcher
 
     vector<thread> Sthreads;
-    queue<Client_connection> fila;
 
-    pthread_cond_t consCond = PTHREAD_COND_INITIALIZER;
-    pthread_cond_t prodCond = PTHREAD_COND_INITIALIZER;
-    pthread_mutex_t Mutex = PTHREAD_MUTEX_INITIALIZER;
-
-    static void atenderCliente(int connectionfd, sockaddr_in6 clientAddr, socklen_t addrLen);
-    void consumir(int num_thrd);
 
   public:
-    Server(){}
-    Server(int porta);
-
     //configura e inicializa o socket
-    void Start();
+    virtual void Start() = 0;
 
     //passa a ouvir o socket
-    void Listen();
+    virtual void Listen(size_t listen_buffer_size){
+      //listen for a connection request
+      if (listen(sockfd, listen_buffer_size) < 0){
+        perror(RED("listen() falhou"));
+        return;
+      }
+      cout << GRN("Pronto para conexão") << endl;
+    };
     //começa a operar realmente
-    void Accept();
+    virtual void Accept() = 0;
 
-    void Close();
-    ~Server();
-
-
-    //handler para fechar sockets de todos os servers quando receber sinal ctrl+c
-    static void my_handler(int s);
+    virtual void Close() = 0;
 
 };
