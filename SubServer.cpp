@@ -1,8 +1,9 @@
 #include "SubServer.h"
+#include <stdlib.h>
 using namespace std;
 
 
-static SubServer *instance;
+SubServer* SubServer::instance = NULL;
 
 SubServer::SubServer(int porta){
 
@@ -17,6 +18,8 @@ SubServer::SubServer(int porta){
     serverAddr.sin6_family = AF_INET6;
     // htonl() -> converte um short sem sinal de host byte order para network byte order ( o que é isso?, nao faço ideia)
     serverAddr.sin6_port = htons((ushort)porta);
+    
+    //inet_pton(AF_INET6, "ipv6 que quer usar", &serverAddr.sin6_addr);
     serverAddr.sin6_addr = in6addr_any; //ou gethostbyname("localhost");
 
     cout << GRN("Socket criado") << endl;
@@ -24,7 +27,7 @@ SubServer::SubServer(int porta){
     /*********configura o signal***********/
     struct sigaction sigIntHandler;
 
-    sigIntHandler.sa_handler = &SubServer::my_handler;
+    sigIntHandler.sa_handler = &this->my_signal_handler;
     sigemptyset(&sigIntHandler.sa_mask);
     sigIntHandler.sa_flags = 0;
     sigaction(SIGINT, &sigIntHandler, NULL);
@@ -33,16 +36,15 @@ SubServer::SubServer(int porta){
     instance = this;
 }
 
-void SubServer::atenderServer(int connectionfd){
+void SubServer::atenderServer(int connectionfd, int threadNum){
 
     char bufferIn[2056] = {0};
     char bufferOut[2056] = {0};
     char *msg;
 
     int totalBytes;
-    bool continuar = true;
     
-    while(continuar){
+    while(true){
         //recebe mesagem e já "desencapsula" ela (4 primeiros bytes são um inteiro descritor da conexão)
         totalBytes = recv(connectionfd, bufferIn, sizeof(bufferIn), 0);
         msg = bufferIn+sizeof(int);
@@ -51,24 +53,25 @@ void SubServer::atenderServer(int connectionfd){
             case -1:
                 perror(RED("erro ao receber mensagem do SuperServidor"));
                 send(connectionfd, bufferIn, 0, MSG_NOSIGNAL);
-                break;
-            case 0:
-                perror(YEL("o SuperServidor fechou a conexão antes que todos os dados fossem encaminhados"));
-                continuar = false;
-                break;
+                continue;
+            case 0:     //serviord Super desconectou-se de mim
+                //perror(YEL("o SuperServidor fechou a conexão antes que todos os dados fossem encaminhados"));
+                return;
             default:
                 cout << totalBytes << " Bytes recebidos --> ";
                 printf("\"%s\"\n", msg);
 
                 /********trata do processamento da requisição********/
+                //hardwork();
 
 
                 /*******terminar de tratar requisição***************/
 
                 //envia a mensagem processada de volta ao servidor
                 memcpy(bufferOut, bufferIn, sizeof(int));
-                sprintf(bufferOut+sizeof(int), "Resposta da msg \"%s\", realizada pelo subServer da porta %hu", msg, ntohs((ushort)serverAddr.sin6_port));
+                sprintf(bufferOut + sizeof(int), "Resposta da msg \"%s\", realizada pelo subServer da porta %hu, thread %d", msg, ntohs((ushort)serverAddr.sin6_port), threadNum);
                 msg = bufferOut+sizeof(int);
+                
                 totalBytes = send(connectionfd, bufferOut, strlen(msg) + 1 + sizeof(int), MSG_NOSIGNAL);
                 if (totalBytes == -1)
                     cout << YEL("Falhou ao responder, SuperServidor fechou a conexão") << endl;
@@ -80,9 +83,9 @@ void SubServer::atenderServer(int connectionfd){
     }
 
     //shutdown(connectionfd, SHUT_RDWR); //fecha socket para receber e enviar dados
-    printf(BOLD(YEL("Fim da conexão\n")));
+    //printf(BOLD(YEL("Fim da conexão\n")));
+    printf(BOLD(YEL("Fim da trhead %d\n")), threadNum);
 }
-
 
 //configura e inicializa o socket
 void SubServer::Start(){
@@ -92,6 +95,10 @@ void SubServer::Start(){
         perror(RED("bind() falhou"));
         return;
     }
+}
+
+void SubServer::Listen(size_t listen_buffer_size = 20){
+    Server::Listen(listen_buffer_size);
 }
 
 void SubServer::Accept(){
@@ -111,38 +118,37 @@ void SubServer::Accept(){
         cout << "\tPorta da conexão: " << ntohs(clientAddr.sin6_port) << endl;
     }
 
-    //Sthreads.push_back( thread(atenderCliente, connectionfd, clientAddr, addrLen) );
-
     //inicia as threads
     Sthreads.resize(NUM_THREADS);
-    for (int i = 0; i < Sthreads.size(); i++){
-        Sthreads[i] = thread(&SubServer::atenderServer, this, connectionfd);
-    }
-    atenderServer(connectionfd);
+    for (int i = 0; i < Sthreads.size(); i++)
+        Sthreads[i] = thread(&SubServer::atenderServer, this, connectionfd, i+1);
+    
+    atenderServer(connectionfd, 0); //faz a thread main tb trabalhar
 
 }
 
 SubServer::~SubServer(){
-    printf("Fechando SubServidor\n");
+    printf(MAG("Fechando SubServidor\n"));
     Close();
 }
 
 void SubServer::Close(){
-    printf("\t" BOLD("`") "->Finalizando threads 0 a %u", Sthreads.size()-1);
-    //pthread_cond_destroy(&consCond);
-    //pthread_cond_destroy(&prodCond);
-    //pthread_mutex_destroy(&Mutex);
+    //printf("\t" BOLD("`") "->Finalizando threads 0 a %lu", Sthreads.size()-1);
+    //for (thread &thrd: Sthreads)
+    //    thrd.join();    // ou pthread_cancel(thrd.native_handle()); ... dependendo do caso
     close(sockfd);
     close(connectionfd);
-    for (int i = 0; i < Sthreads.size(); i++){
-        pthread_cancel(Sthreads[i].native_handle());
-    }
 }
 
 //handler para fechar sockets de todos os servers quando receber sinal ctrl+c
-void SubServer::my_handler(int s){
+void SubServer::my_signal_handler(int s){
     printf("\nCaught signal %d\n", s);
     printf(MAG("Fechando SubServidor\n"));
+    
+    printf("\t" BOLD("`") "->Finalizando threads 0 a %lu", instance->Sthreads.size()-1);
+    for (thread &thrd: instance->Sthreads)
+        pthread_cancel(thrd.native_handle());
+
     instance->Close();
     printf("\n");
     exit(1);
@@ -158,18 +164,18 @@ int main(int argc, char *argv[]){
         exit(1);
     }
 
-
     try {
         //criando objeto servidor
         class SubServer subServidor(atoi(argv[1]));
 
         /***************Iniciando servidor*********************/
         subServidor.Start();
-        subServidor.Listen();
+        subServidor.Listen(20);
 
         subServidor.Accept();
     }
     catch (exception ex) {
         cout << "Erro ao construir objeto" << endl;
     }
+
 }

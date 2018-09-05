@@ -7,14 +7,17 @@ class SubServer: public Server{
 
  
   protected:
-    void atenderServer(int connectionfd);
+    void atenderServer(int connectionfd, int threadNumber);
+    
+    static void my_signal_handler(int s);
+    static SubServer *instance;
 
   public:
-    static void my_handler(int s);
     SubServer(int porta);
     ~SubServer();
-    void Start();
-    void Accept();
-    void Close();
+    virtual void Start();
+    virtual void Listen(size_t listen_buffer_size = 20);
+    virtual void Accept();
+    virtual void Close();
 
 };
