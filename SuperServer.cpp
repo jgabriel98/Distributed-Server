@@ -76,14 +76,15 @@ SuperServer::SuperServer(int porta, vector<int> portaSubServers){
 //le e processa as mensagens dos clientes. sem realação de "designar" uma thread para unico cliente ou vice-versa
 void SuperServer::atenderClientes(){
 
-    bool continuar = true;
-    while (continuar){
+    while (true){
 
         char buffer[2056] = {0};
 
         sigset_t signalMask;
         epoll_event event;
-        epoll_pwait(connectionsPoll, &event, 1, -1, &signalMask); //espera pela chegada de alguma mensagem em alguma das conexões
+
+        //espera pela chegada de alguma mensagem no poll, apenas um por vez
+        epoll_pwait(connectionsPoll, &event, 1, -1, &signalMask);
         int totalBytes = recv(event.data.fd, buffer, sizeof(buffer), 0);
 
         switch (totalBytes){
@@ -92,7 +93,6 @@ void SuperServer::atenderClientes(){
             continue;
         case 0:
             perror(YEL("o cliente fechou a conexão antes que todos os dados fossem enviados"));
-            //continuar = false;
             continue;
         default:
             cout << totalBytes << " Bytes recebidos --> ";
@@ -100,12 +100,10 @@ void SuperServer::atenderClientes(){
         }
 
         if (!strcmp(buffer, "bye") || !strcmp(buffer, "exit")){ //cliente quer parar a conexão
-            //continuar = false;
             strcpy(buffer, "Bye!");
             send(event.data.fd, buffer, strlen(buffer) + 1, MSG_NOSIGNAL);
             printf(BOLD(YEL("\tFim de conexão com cliente\n")));
-            //shutdown(event.data.fd, SHUT_RD); //fecha socket para recebimento de dados
-            close(event.data.fd);
+            close(event.data.fd);   //fecha o socket com cliente
         }
         else{
             //totalBytes = send(connectionfd, buffer, strlen(buffer) + 1, MSG_NOSIGNAL);
@@ -138,7 +136,7 @@ void SuperServer::Start(){
 
     //inicia uma thread para cada subservidor, que vai tratar das respostas dele
     Sthreads.resize(subSockfd.size());
-    for (thread &thrd: Sthreads){
+    for (int i=0; i<Sthreads.size(); i++){
         Sthreads[i] = thread(&SuperServer::HandleAnswers, this, i);
     }
 }
@@ -250,7 +248,6 @@ void SuperServer::HandleAnswers(size_t subServerIdx){
         }
 
         //encaminhar msg para cliente original;
-        //sprintf(bufferOut, "Resposta da msg \"%s\", realizada pelo subServer %u", bufferIn+sizeof(int), subServerIdx);
         send(clientSockFd, bufferIn+sizeof(int), strlen(bufferIn+sizeof(int))+1, 0);
     }
 }
