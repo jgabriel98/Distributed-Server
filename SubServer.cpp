@@ -1,3 +1,7 @@
+/** @author: João Gabriel Silva Fernandes
+ * @email: jgabsfernandes@gmail.com
+ * 
+*/
 #include "SubServer.h"
 #include <stdlib.h>
 using namespace std;
