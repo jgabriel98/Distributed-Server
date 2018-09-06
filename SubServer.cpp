@@ -134,8 +134,8 @@ SubServer::~SubServer(){
 
 void SubServer::Close(){
     //printf("\t" BOLD("`") "->Finalizando threads 0 a %lu", Sthreads.size()-1);
-    //for (thread &thrd: Sthreads)
-    //    thrd.join();    // ou pthread_cancel(thrd.native_handle()); ... dependendo do caso
+    for (thread &thrd: Sthreads)
+        thrd.join();    // ou pthread_cancel(thrd.native_handle()); ... dependendo do caso
     close(sockfd);
     close(connectionfd);
 }
