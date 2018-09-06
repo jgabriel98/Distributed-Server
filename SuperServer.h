@@ -9,11 +9,11 @@ class SuperServer: public Server/*, public Client*/{
 
     vector<int> subSockfd;
     vector<sockaddr_in6> addr;
-    int connectionsPoll;
+    int connectionsPoll;  //poll para ouvir mensagens de todos clientes
     //vector<queue<Client_connection>> filas;     //uma fila para cada sub servidor
 
 
-    vector<thread> sendThreads;
+    vector<thread> sendThreads; //threads que escutam o poll 'connectionsPoll'
 
     void atenderClientes();
     size_t PassMsg(int connectionFileDescriptor,char msg[], size_t buffer_len, int FLAG);

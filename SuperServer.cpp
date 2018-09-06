@@ -72,17 +72,14 @@ SuperServer::SuperServer(int porta, vector<int> portaSubServers){
     instance = this;
 }
 
-
 //le e processa as mensagens dos clientes. sem realação de "designar" uma thread para unico cliente ou vice-versa
 void SuperServer::atenderClientes(){
+    char buffer[2056] = {0};
+
+    sigset_t signalMask;
+    epoll_event event;
 
     while (true){
-
-        char buffer[2056] = {0};
-
-        sigset_t signalMask;
-        epoll_event event;
-
         //espera pela chegada de alguma mensagem no poll, apenas um por vez
         epoll_pwait(connectionsPoll, &event, 1, -1, &signalMask);
         int totalBytes = recv(event.data.fd, buffer, sizeof(buffer), 0);
@@ -93,6 +90,8 @@ void SuperServer::atenderClientes(){
             continue;
         case 0:
             perror(YEL("o cliente fechou a conexão antes que todos os dados fossem enviados"));
+            epoll_ctl(connectionsPoll, EPOLL_CTL_DEL, event.data.fd, &event);
+            close(event.data.fd);
             continue;
         default:
             cout << totalBytes << " Bytes recebidos --> ";
@@ -103,22 +102,20 @@ void SuperServer::atenderClientes(){
             strcpy(buffer, "Bye!");
             send(event.data.fd, buffer, strlen(buffer) + 1, MSG_NOSIGNAL);
             printf(BOLD(YEL("\tFim de conexão com cliente\n")));
+            epoll_ctl(connectionsPoll, EPOLL_CTL_DEL, event.data.fd, &event);
             close(event.data.fd);   //fecha o socket com cliente
         }
         else{
-            //totalBytes = send(connectionfd, buffer, strlen(buffer) + 1, MSG_NOSIGNAL);
+            
             totalBytes = PassMsg(event.data.fd, buffer, strlen(buffer) + 1 ,MSG_NOSIGNAL);   //passa a mensagem para algum subservidor
-            if (totalBytes == -1){
-                perror(YEL("Erro ao reeencaminhar mensagem"));
-                break;
-            }
+            if (totalBytes == -1)
+                perror(YEL("Erro ao reencaminhar mensagem"));
             else
-                cout << CYN("mensagem reeencaminhada") << endl;
+                cout << CYN("\tmensagem reencaminhada para SubServer\n") << endl;
         }
         
     }
 
-    //shutdown(connectionfd, SHUT_RDWR); //fecha socket para receber e enviar dados
     //printf(BOLD(YEL("Fim da conexão\n")));
 }
 
@@ -161,7 +158,7 @@ void SuperServer::Listen(size_t buffer_connection_size = 50, size_t numThreads =
     cout << GRN("Pronto para conexão com Clientes") << endl;
 
  /******adiciona socket ao poll ******/
-    connectionsPoll = epoll_create(subSockfd.size());
+    connectionsPoll = epoll_create1(0);
 
     if(connectionsPoll <0){
         perror(RED("Erro ao criar poll de sockets"));
@@ -196,6 +193,7 @@ void SuperServer::Accept(){
 
     struct epoll_event *event = new epoll_event;
     event->events = EPOLLIN | EPOLLET;
+    //event->events = EPOLLIN;
     event->data.fd = connectionfd;
 
     if(epoll_ctl(connectionsPoll, EPOLL_CTL_ADD, event->data.fd, event)<0){
@@ -210,7 +208,12 @@ void SuperServer::Accept(){
 size_t SuperServer::PassMsg(int connectionFileDescriptor, char msg[], size_t buffer_len, int FLAG){
     static int SubServerIdx = 0;
 
-    SubServerIdx = ++SubServerIdx % subSockfd.size();
+    //seleciona apenas servidores em pé ( que nao cairam )
+    do{
+        SubServerIdx = ++SubServerIdx % subSockfd.size();
+    }while(subSockfd[SubServerIdx] < 0 );
+
+    printf("num of subServers %lu\tEnviando para %d", subSockfd.size(), SubServerIdx);
 
     //enviar o descritor da conexão + mensagem original
     char _msg[buffer_len + sizeof(int)];
@@ -226,7 +229,7 @@ size_t SuperServer::PassMsg(int connectionFileDescriptor, char msg[], size_t buf
 void SuperServer::HandleAnswers(size_t subServerIdx){
     constexpr size_t buff_size = 1024;
     char bufferIn[buff_size];
-    char bufferOut[buff_size];
+    //char bufferOut[buff_size];
 
     size_t total_bytes;
     int clientSockFd;
@@ -240,15 +243,21 @@ void SuperServer::HandleAnswers(size_t subServerIdx){
             printf(YEL("erro ao receber mensagem do SubServidor %lu"), subServerIdx);perror("");
             continue;
         case 0:
-            printf(RED("o SubServidor %lu fechou a conexão antes que todos os dados fossem enviados"), subServerIdx);perror((""));
+            printf(RED("o SubServidor %lu fechou a conexão "), subServerIdx);
+            fflush(stdout);
+
+            //remove o subservidor da lista e finaliza thread ('return')
+            close(subSockfd[subServerIdx]);
+            subSockfd[subServerIdx] = -1; //"flag" para indicar que socket fechou
             return;
         default:
-            cout << total_bytes << " Bytes recebidos de SubServ. "<<subServerIdx<<" --> ";
-            printf("\"%s\"\n", bufferIn+sizeof(int));
+            cout << total_bytes << " Bytes recebidos de SubServ. "<<subServerIdx<<endl;
+            //printf("\"%s\"\n", bufferIn+sizeof(int));
         }
 
         //encaminhar msg para cliente original;
         send(clientSockFd, bufferIn+sizeof(int), strlen(bufferIn+sizeof(int))+1, 0);
+        printf(CYN("\tmensagem reencaminhada para Cliente\n"));
     }
 }
 
